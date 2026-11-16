@@ -155,5 +155,142 @@
   </div>
 </div>
 
+<script>
+/* ---------- datas ---------- */
+const DIAS_CURTO = ["D", "S", "T", "Q", "Q", "S", "S"];
+const DIAS_NOME = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
+function iso(d) {
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+function deIso(s) { const [a, m, d] = s.split("-").map(Number); return new Date(a, m - 1, d); }
+function somarDias(s, n) { const d = deIso(s); d.setDate(d.getDate() + n); return iso(d); }
+function diasEntre(a, b) { return Math.round((deIso(b) - deIso(a)) / 86400000); }
+let HOJE = iso(new Date());
+
+/* ---------- estado (salvo no navegador) ---------- */
+const KEY = "meu-dia-v1";
+const uid = () => Math.random().toString(36).slice(2, 10);
+const novaTarefa = (titulo, prioridade = null, data = "") => ({ id: uid(), titulo, prioridade, data, feitaEm: null, criadoEm: HOJE });
+
+function estadoInicial() {
+  const ideias = [
+    "Cadeira de escritório", "Mesa de escritório", "Mouse gamer", "Box do banheiro", "Toalha de banho",
+    "Caixa de fruta para organizar o quarto", "Roupa de cama", "Arrumar a infiltração do banheiro",
+    "Arrumar o forro do banheiro", "Pintar a parede do quarto", "Fazer meus óculos", "Arrumar a bicicleta",
+    "Fazer networking na vida pessoal", "Fazer networking na vida profissional",
+    "Melhorar minhas habilidades sociais e de comunicação",
+    "Desenvolver projetos de audiovisual, fotografia e edição de vídeo",
+  ];
+  return {
+    habitos: [],
+    tarefas: [
+      novaTarefa("Cortar cabelo", "alta", HOJE),
+      novaTarefa("Comprar sapatos (casuais e estilo hardtek)", "alta", HOJE),
+      ...ideias.map(t => novaTarefa(t)),
+    ],
+    abertos: {},
+  };
+}
+
+let estado;
+try { estado = JSON.parse(localStorage.getItem(KEY)); } catch (e) { estado = null; }
+if (!estado || !Array.isArray(estado.tarefas)) estado = estadoInicial();
+estado.habitos = estado.habitos || [];
+estado.abertos = estado.abertos || {};
+estado.tarefas.forEach(t => { if (!t.criadoEm) t.criadoEm = HOJE; });
+function salvar() { try { localStorage.setItem(KEY, JSON.stringify(estado)); } catch (e) {} }
+
+/* ---------- regras ---------- */
+const PRIOS = [null, "alta", "media", "baixa"];
+const PRIO_NOME = { alta: "Alta", media: "Média", baixa: "Baixa" };
+const PRIO_PESO = { alta: 0, media: 1, baixa: 2 };
+
+function habitoNoDia(h, d) { return h.dias.includes(deIso(d).getDay()); }
+
+// dias seguidos cumpridos, contando só os dias em que o hábito vale. Hoje ainda não feito não quebra a sequência.
+function sequencia(h) {
+  let n = 0, d = HOJE;
+  if (habitoNoDia(h, d) && !h.feitos[d]) d = somarDias(d, -1);
+  for (let i = 0; i < 400; i++) {
+    if (h.criado && d < h.criado) break;
+    if (habitoNoDia(h, d)) { if (h.feitos[d]) n++; else break; }
+    d = somarDias(d, -1);
+  }
+  return n;
+}
+function descreverDias(dias) {
+  if (dias.length === 7) return "todo dia";
+  const s = [...dias].sort().join("");
+  if (s === "12345") return "dias úteis";
+  if (s === "06") return "fins de semana";
+  return [1, 2, 3, 4, 5, 6, 0].filter(d => dias.includes(d)).map(d => DIAS_NOME[d]).join(", ");
+}
+
+// tarefa com data até hoje e não feita = aparece em Hoje (as de dias anteriores ficam marcadas como atrasadas)
+const tarefasHoje = () => estado.tarefas.filter(t => t.data && t.data <= HOJE && !t.feitaEm);
+const feitasHoje = () => estado.tarefas.filter(t => t.feitaEm === HOJE);
+const tarefasIdeias = () => estado.tarefas.filter(t => !t.data && !t.feitaEm);
+const tarefasFuturas = () => estado.tarefas.filter(t => t.data > HOJE && !t.feitaEm);
+
+/* ---------- ajudantes de tela ---------- */
+function el(tag, attrs = {}, ...filhos) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") e.className = v;
+    else if (v !== false && v != null) e.setAttribute(k, v === true ? "" : v);
+  }
+  for (const f of filhos) if (f != null) e.append(f);
+  return e;
+}
+function botao(classe, texto, titulo, aoClicar) {
+  const b = el("button", { class: classe, type: "button", title: titulo }, texto);
+  b.addEventListener("click", aoClicar);
+  return b;
+}
+function tituloEditavel(obj) {
+  const d = el("div", { class: "title", contenteditable: "true", spellcheck: "false" });
+  d.textContent = obj.titulo;
+  d.addEventListener("keydown", e => {
+    if (e.key === "Enter") { e.preventDefault(); d.blur(); }
+    if (e.key === "Escape") { d.textContent = obj.titulo; d.blur(); }
+  });
+  d.addEventListener("blur", () => {
+    const v = d.textContent.trim();
+    if (!v) { d.textContent = obj.titulo; return; }
+    if (v !== obj.titulo) { obj.titulo = v; salvar(); }
+  });
+  return d;
+}
+function linhaAdicionar(placeholder, aoAdicionar) {
+  const inp = el("input", { type: "text", placeholder, "aria-label": placeholder });
+  inp.addEventListener("keydown", e => { if (e.key === "Enter" && inp.value.trim()) aoAdicionar(inp.value.trim()); });
+  return el("div", { class: "add-row" }, el("span", { class: "plus" }, "+"), inp);
+}
+function chipPrioridade(t) {
+  return botao("chip " + (t.prioridade || ""), t.prioridade ? "● " + PRIO_NOME[t.prioridade] : "prioridade",
+    "Clique para mudar a prioridade",
+    () => { t.prioridade = PRIOS[(PRIOS.indexOf(t.prioridade) + 1) % PRIOS.length]; salvar(); render(); });
+}
+function secaoRecolhivel(box, chave, rotulo, itens, criarItem) {
+  if (!itens.length) return;
+  const aberto = !!estado.abertos[chave];
+  box.append(botao("collapse-btn", (aberto ? "▾ " : "▸ ") + `${rotulo} (${itens.length})`, "",
+    () => { estado.abertos[chave] = !aberto; salvar(); render(); }));
+  if (aberto) {
+    const ul = el("ul", { class: "items" });
+    itens.forEach(x => ul.append(criarItem(x)));
+    box.append(ul);
+  }
+}
+function idade(dataIso) {
+  const n = diasEntre(dataIso, HOJE);
+  if (n <= 0) return "";
+  if (n === 1) return "ontem";
+  if (n < 14) return `há ${n} dias`;
+  if (n < 60) return `há ${Math.floor(n / 7)} semanas`;
+  return `há ${Math.floor(n / 30)} meses`;
+}
+const remover = t => { estado.tarefas = estado.tarefas.filter(x => x !== t); salvar(); render(); };
+</script>
 </body>
 </html>
