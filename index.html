@@ -291,6 +291,184 @@ function idade(dataIso) {
   return `há ${Math.floor(n / 30)} meses`;
 }
 const remover = t => { estado.tarefas = estado.tarefas.filter(x => x !== t); salvar(); render(); };
+
+/* ---------- topo ---------- */
+function renderTopo() {
+  const agora = new Date();
+  const data = agora.toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" });
+  document.getElementById("date-line").textContent = data.charAt(0).toUpperCase() + data.slice(1);
+  const h = agora.getHours();
+  document.getElementById("greeting").textContent = h < 12 ? "Bom dia" : h < 18 ? "Boa tarde" : "Boa noite";
+
+  const habs = estado.habitos.filter(x => habitoNoDia(x, HOJE));
+  const total = habs.length + tarefasHoje().length + feitasHoje().length;
+  const feitos = habs.filter(x => x.feitos[HOJE]).length + feitasHoje().length;
+  document.getElementById("bar").style.width = (total ? feitos / total * 100 : 0) + "%";
+  document.getElementById("progress-text").textContent =
+    !total ? "Nada planejado para hoje" : feitos === total ? "Tudo feito hoje 🎉" : `${feitos} de ${total} feitos hoje`;
+}
+
+/* ---------- hábitos ---------- */
+function renderHabitos() {
+  const box = document.getElementById("habitos");
+  box.innerHTML = "";
+  const deHoje = estado.habitos.filter(h => habitoNoDia(h, HOJE));
+  const folga = estado.habitos.filter(h => !habitoNoDia(h, HOJE));
+  const feitos = deHoje.filter(h => h.feitos[HOJE]).length;
+
+  box.append(el("div", { class: "card-head" },
+    el("div", {}, el("h2", {}, "Hábitos"),
+      el("div", { class: "sub" }, deHoje.length ? `${feitos} de ${deHoje.length} hoje · voltam desmarcados todo dia` : "Coisas que se repetem")),
+    el("div", { class: "head-actions" }, botao("link-btn", "+ Novo hábito", "", () => editarHabito(null)))));
+
+  if (!estado.habitos.length) {
+    box.append(el("div", { class: "empty" }, "Nenhum hábito ainda. Crie um para o que você quer fazer com frequência, como beber água ou ler 10 minutos."));
+    return;
+  }
+  const ul = el("ul", { class: "items" });
+  deHoje.forEach(h => ul.append(habitoEl(h, true)));
+  box.append(ul);
+  if (!deHoje.length) box.append(el("div", { class: "empty" }, "Nenhum hábito para hoje."));
+  secaoRecolhivel(box, "folga", "Não é dia hoje", folga, h => habitoEl(h, false));
+}
+
+function habitoEl(h, ehHoje) {
+  const li = el("li", { class: "habit" + (h.feitos[HOJE] ? " done" : "") });
+  const cb = el("input", { type: "checkbox", "aria-label": h.nome });
+  cb.checked = !!h.feitos[HOJE];
+  cb.disabled = !ehHoje;
+  cb.addEventListener("change", () => {
+    if (cb.checked) h.feitos[HOJE] = true; else delete h.feitos[HOJE];
+    salvar(); render();
+  });
+
+  const semana = el("div", { class: "week", title: "Últimos 7 dias" });
+  for (let i = 6; i >= 0; i--) {
+    const d = somarDias(HOJE, -i);
+    let cls = "dot";
+    if (!habitoNoDia(h, d) || (h.criado && d < h.criado)) cls += " off";
+    else if (h.feitos[d]) cls += " ok";
+    else if (d < HOJE) cls += " miss";
+    semana.append(el("span", { class: cls, title: deIso(d).toLocaleDateString("pt-BR", { weekday: "short", day: "numeric" }) }));
+  }
+  const n = sequencia(h);
+
+  li.append(cb,
+    el("div", { class: "main" }, el("div", { class: "title" }, h.nome), el("div", { class: "small" }, descreverDias(h.dias))),
+    semana,
+    el("span", { class: "streak" + (n ? "" : " zero"), title: "Dias seguidos" }, n ? "🔥 " + n : "—"),
+    el("div", { class: "actions" }, botao("icon-btn", "✎", "Editar hábito", () => editarHabito(h))));
+  return li;
+}
+
+function editarHabito(h) {
+  const novo = !h;
+  let dias = h ? [...h.dias] : [0, 1, 2, 3, 4, 5, 6];
+  const nome = el("input", { type: "text", placeholder: "Ex.: Beber 2L de água" });
+  nome.value = h ? h.nome : "";
+
+  const pick = el("div", { class: "daypick" });
+  const desenhar = () => {
+    pick.innerHTML = "";
+    [1, 2, 3, 4, 5, 6, 0].forEach(d => {
+      const b = botao(dias.includes(d) ? "on" : "", DIAS_CURTO[d], DIAS_NOME[d], () => {
+        dias = dias.includes(d) ? dias.filter(x => x !== d) : [...dias, d];
+        desenhar();
+      });
+      pick.append(b);
+    });
+  };
+  desenhar();
+  const rapido = (txt, ds) => botao("", txt, "", () => { dias = ds; desenhar(); });
+
+  const bg = el("div", { class: "modal-bg" });
+  const fechar = () => bg.remove();
+  const confirmar = () => {
+    const v = nome.value.trim();
+    if (!v) { nome.focus(); return; }
+    if (!dias.length) dias = [0, 1, 2, 3, 4, 5, 6];
+    if (novo) estado.habitos.push({ id: uid(), nome: v, dias, feitos: {}, criado: HOJE });
+    else { h.nome = v; h.dias = dias; }
+    salvar(); fechar(); render();
+  };
+  let excluir = null;
+  if (!novo) {
+    excluir = botao("btn danger", "Excluir", "", () => {
+      if (excluir.dataset.certeza) { estado.habitos = estado.habitos.filter(x => x !== h); salvar(); fechar(); render(); }
+      else { excluir.dataset.certeza = "1"; excluir.textContent = "Confirmar exclusão"; }
+    });
+  }
+  nome.addEventListener("keydown", e => { if (e.key === "Enter") confirmar(); if (e.key === "Escape") fechar(); });
+  bg.addEventListener("click", e => { if (e.target === bg) fechar(); });
+
+  bg.append(el("div", { class: "modal" },
+    el("h3", {}, novo ? "Novo hábito" : "Editar hábito"),
+    el("label", { class: "field" }, "Nome"), nome,
+    el("label", { class: "field" }, "Em quais dias?"), pick,
+    el("div", { class: "quick" }, rapido("Todo dia", [0, 1, 2, 3, 4, 5, 6]), rapido("Dias úteis", [1, 2, 3, 4, 5]), rapido("Fins de semana", [0, 6])),
+    el("div", { class: "row" }, excluir,
+      el("div", { class: "right" }, botao("btn", "Cancelar", "", fechar), botao("btn primary", novo ? "Criar" : "Salvar", "", confirmar)))));
+  document.body.append(bg);
+  nome.focus();
+}
+
+/* ---------- hoje ---------- */
+function renderHoje() {
+  const box = document.getElementById("hoje");
+  box.innerHTML = "";
+  const lista = tarefasHoje();
+  const feitas = feitasHoje();
+
+  const ordenar = botao("link-btn", "Ordenar por prioridade", "Coloca as de prioridade alta no topo", () => {
+    reordenar(lista.slice().sort((a, b) => (PRIO_PESO[a.prioridade] ?? 3) - (PRIO_PESO[b.prioridade] ?? 3)).map(t => t.id));
+  });
+  box.append(el("div", { class: "card-head" },
+    el("div", {}, el("h2", {}, "Hoje"),
+      el("div", { class: "sub" }, lista.length ? `${lista.length} pendente${lista.length > 1 ? "s" : ""} · arraste para mudar a ordem` : "Tarefas que acontecem uma vez")),
+    lista.length > 1 ? el("div", { class: "head-actions" }, ordenar) : null));
+
+  box.append(linhaAdicionar("Adicionar tarefa para hoje", txt => {
+    estado.tarefas.unshift(novaTarefa(txt, null, HOJE)); salvar(); render("hoje");
+  }));
+
+  const ul = el("ul", { class: "items sortable", id: "lista-hoje" });
+  lista.forEach(t => ul.append(tarefaHojeEl(t)));
+  box.append(ul);
+  if (!lista.length) box.append(el("div", { class: "empty" }, feitas.length ? "Tudo feito por hoje." : "Nada para hoje ainda. Adicione acima ou puxe algo da caixa de ideias."));
+  secaoRecolhivel(box, "feitas", "Feitas hoje", feitas, tarefaHojeEl);
+}
+
+function tarefaHojeEl(t) {
+  const feita = !!t.feitaEm;
+  const li = el("li", { class: "item" + (feita ? " done" : "") + (t.prioridade && !feita ? " p-" + t.prioridade : ""), "data-id": t.id });
+  const cb = el("input", { type: "checkbox", "aria-label": t.titulo });
+  cb.checked = feita;
+  cb.addEventListener("change", () => { t.feitaEm = cb.checked ? HOJE : null; salvar(); render(); });
+
+  const main = el("div", { class: "main" }, tituloEditavel(t));
+  if (!feita && t.data < HOJE) {
+    const n = diasEntre(t.data, HOJE);
+    main.append(el("div", { class: "note" }, n === 1 ? "Veio de ontem" : `Atrasada há ${n} dias`));
+  }
+  const acoes = el("div", { class: "actions" });
+  if (!feita) {
+    acoes.append(
+      botao("icon-btn", "→", "Passar para amanhã", () => { t.data = somarDias(HOJE, 1); salvar(); render(); }),
+      botao("icon-btn", "↩", "Devolver para a caixa de ideias", () => { t.data = ""; salvar(); render(); }));
+  }
+  acoes.append(botao("icon-btn", "🗑", "Excluir", () => remover(t)));
+  li.append(cb, main, feita ? null : chipPrioridade(t), acoes);
+  return li;
+}
+
+// coloca as tarefas dos ids na ordem dada, sem mexer na posição das outras
+function reordenar(ids) {
+  const mapa = new Map(estado.tarefas.map(t => [t.id, t]));
+  const conjunto = new Set(ids);
+  const fila = ids.map(id => mapa.get(id)).filter(Boolean);
+  estado.tarefas = estado.tarefas.map(t => conjunto.has(t.id) ? fila.shift() : t);
+  salvar(); render();
+}
 </script>
 </body>
 </html>
