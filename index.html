@@ -469,6 +469,96 @@ function reordenar(ids) {
   estado.tarefas = estado.tarefas.map(t => conjunto.has(t.id) ? fila.shift() : t);
   salvar(); render();
 }
+
+/* ---------- caixa de ideias ---------- */
+function renderIdeias() {
+  const box = document.getElementById("ideias");
+  box.innerHTML = "";
+  const lista = tarefasIdeias();
+
+  box.append(el("div", { class: "card-head" },
+    el("div", {}, el("h2", {}, "Caixa de ideias"), el("div", { class: "sub" }, "Anote sem pensar. Puxe para hoje quando decidir")),
+    el("span", { class: "kbd-hint", title: "Aperte N em qualquer lugar para anotar uma ideia" }, "N")));
+  box.append(linhaAdicionar("Guardar uma ideia", txt => {
+    estado.tarefas.push(novaTarefa(txt)); salvar(); render("ideias");
+  }));
+
+  const ul = el("ul", { class: "items sortable", id: "lista-ideias" });
+  lista.forEach(t => {
+    const li = el("li", { class: "item", "data-id": t.id });
+    const quando = idade(t.criadoEm);
+    li.append(
+      el("div", { class: "main" }, tituloEditavel(t), quando ? el("div", { class: "small" }, quando) : null),
+      el("div", { class: "actions" }, botao("icon-btn", "🗑", "Excluir", () => remover(t))),
+      botao("pull", "Hoje", "Fazer hoje", () => { t.data = HOJE; salvar(); render(); }));
+    ul.append(li);
+  });
+  box.append(ul);
+  if (!lista.length) box.append(el("div", { class: "empty" }, "Vazia. Anote aqui o que não precisa ser hoje."));
+
+  secaoRecolhivel(box, "futuro", "Agendadas para depois",
+    tarefasFuturas().sort((a, b) => a.data.localeCompare(b.data)),
+    t => {
+      const n = diasEntre(HOJE, t.data);
+      const quando = n === 1 ? "Amanhã" : deIso(t.data).toLocaleDateString("pt-BR", { weekday: "long", day: "numeric" });
+      return el("li", { class: "item" },
+        el("div", { class: "main" }, el("div", { class: "title" }, t.titulo), el("div", { class: "small" }, quando)),
+        botao("pull", "Hoje", "Fazer hoje", () => { t.data = HOJE; salvar(); render(); }));
+    });
+}
+
+/* ---------- arrastar (Hoje <-> Caixa de ideias) ---------- */
+let sortables = [];
+function ligarArraste() {
+  sortables.forEach(s => s.destroy()); sortables = [];
+  if (!window.Sortable) return;
+  ["lista-hoje", "lista-ideias"].forEach(id => {
+    const ul = document.getElementById(id);
+    if (!ul) return;
+    sortables.push(Sortable.create(ul, {
+      group: "tarefas", animation: 150, ghostClass: "ghost",
+      filter: "input, .title, button", preventOnFilter: false,
+      onEnd: evt => {
+        const t = estado.tarefas.find(x => x.id === evt.item.dataset.id);
+        if (!t) return;
+        if (evt.to.id === "lista-hoje" && !(t.data && t.data <= HOJE)) t.data = HOJE;
+        if (evt.to.id === "lista-ideias") t.data = "";
+        reordenar([...evt.to.children].map(li => li.dataset.id));
+      }
+    }));
+  });
+}
+
+/* ---------- desenhar tudo ---------- */
+function render(focar) {
+  HOJE = iso(new Date());
+  renderTopo();
+  renderHabitos();
+  renderHoje();
+  renderIdeias();
+  ligarArraste();
+  if (focar) { const i = document.querySelector(`#${focar} .add-row input`); if (i) i.focus(); }
+}
+
+// atalho: N abre o campo da caixa de ideias de qualquer lugar
+document.addEventListener("keydown", e => {
+  if (e.key !== "n" && e.key !== "N") return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const a = document.activeElement;
+  if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable)) return;
+  if (document.querySelector(".modal-bg")) return;
+  const inp = document.querySelector("#ideias .add-row input");
+  if (inp) { e.preventDefault(); inp.scrollIntoView({ block: "center", behavior: "smooth" }); inp.focus(); }
+});
+
+// se o dia virar com a página aberta, atualiza sozinho
+setInterval(() => {
+  if (iso(new Date()) !== HOJE && !document.querySelector(".modal-bg") && !document.activeElement?.isContentEditable) render();
+}, 60000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden && iso(new Date()) !== HOJE) render(); });
+
+salvar();
+render();
 </script>
 </body>
 </html>
